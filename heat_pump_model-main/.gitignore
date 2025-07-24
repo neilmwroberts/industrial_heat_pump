@@ -1,0 +1,5 @@
+output/
+plots/
+images/
+data.xlsx
+*.pyc

@@ -1,0 +1,44 @@
+# If csv data will be used, update n_hrs after running construct_yaml_input_quantities
+n_hrs: 8760
+
+##### Usage Notes #####
+
+# If a variable uses a dictionary, the dictionary must include a value (val) and a unit.
+# If an input array (hourly data) will be used, load this file, then write over the inputs here with desired array.
+
+##### IO #####
+print_results: True
+write_output_file: True
+
+##### 1. Performance #####
+thermal_efficiency: {val: 0.8, unit: 'dimensionless'}
+
+##### 2.Energy and Mass Flow #####
+process_heat_requirement: {val: 1.0, unit: 'MW'}
+# Working Fluid
+working_fluid: 'water'
+## Cold In
+cold_temperature: {val: 115.0, unit: 'degC'}
+cold_pressure: {val: 1.0, unit: 'atm'}
+## Setting working fluid parameters
+hot_pressure: {val: 1.1, unit: 'atm'}
+hot_temperature: {val: 120.0, unit: 'degC'}
+process_heat_requirement: {val: 1.0, unit: 'MW'}
+
+##### 3.Gas Costs #####
+# $9000/MMBTU/Hr -> $30/kW
+specific_capital_cost: {val: 0000, unit: 'USD / (MMBtu / hr)'} #9000$/mmbtu/hr
+fixed_o_and_m_per_size: {val: 50, unit: 'USD / (MMBtu / hr)'}
+variable_o_and_m: {val: 0.01, unit: 'USD / MMBtu'}
+gas_price: {val: 14.3, unit: 'USD / MMBtu'} #2025-04-22 Schedule G10 core commodity gas price from socal gas https://tariffsprd.socalgas.com/view/historical/?utilId=SCG&bookId=GAS&tarfKey=327&tarfYear=2025
+lifetime: {val: 20.0, unit: 'yr'}
+discount_rate: {val: 10, unit: 'percent'}
+# Emissions
+emissions_factor: {val: 0.053, unit: 'ton / MMBtu'}
+emissions_volume_per_energy: {val: 9.804e-4, unit: 'MMSCF/MMBtu'}
+emissions_carbon_price: {val: 0.0, unit: 'USD / ton'}
+year_one_emissions: {val: 0.0, unit: 'ton / yr'}
+
+##### 5. Cash Flow Model #####
+CAGR: {val: 0.0214, unit: 'dimensionless'}
+

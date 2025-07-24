@@ -1,0 +1,75 @@
+# If csv data will be used, update n_hrs after running construct_yaml_input_quantities
+n_hrs: 8760
+
+##### Usage Notes #####
+
+# If a variable uses a dictionary, the dictionary must include a value (val) and a unit.
+# If an input array (hourly data) will be used, load this file, then write over the inputs here with desired array.
+
+#Assumptions links:
+#https://vaporphase.sharepoint.com/:x:/s/allcompany/EQ3qbSEBwr5NivFO_odulB0BDJUatgnZE8OcqABZeUPtJw?e=ChSScb
+##### IO #####
+print_results: True
+write_output_file: True
+
+##### 1.COP #####
+cold_temperature_available: {val: 25.0, unit: 'degC'}
+hot_temperature_desired: {val: 135.0, unit: 'degC'} #average of process temp and peak storage temp
+second_law_efficiency: {val: 0.7, unit: 'dimensionless'}
+# If the refrigerant selection process fails, the flag is changed to true so that it can be automatically analyzed post processing
+second_law_efficiency_flag: True
+t_crit_delta: {val: 30, unit: 'delta_degC'}
+min_p_crit: {val: 1.0e9, unit: 'Pa'}
+# The hot and cold buffer are the temperature difference between the working fluid and the hot and cold streams, a measure of the heat exchanger efficiency
+cold_buffer: {val: 5.0, unit: 'delta_degC'}
+hot_buffer: {val: 5.0, unit: 'delta_degC'}
+compressor_efficiency: {val: 0.7, unit: 'dimensionless'}
+# Refrigerant
+refrigerant: 'R1234ze(Z)'
+refrigerant_flag: False
+
+##### 2.Energy and Mass Flow #####
+# Cold Inputs
+cold_pressure: {val: 1.0, unit: 'atm'}
+cold_mass_flowrate: {val: NaN, unit: 'kg/s'}
+cold_refrigerant: 'water'
+cold_deltaT: {val: 1.0, unit: 'delta_degC'}
+# Hot inputs
+hot_pressure: {val: 1.0, unit: 'atm'}
+hot_temperature_minimum: {val: 135, unit: 'degC'}
+hot_mass_flowrate: null
+hot_refrigerant: 'water'
+# Process Heat
+process_heat_requirement: {val: 1.0, unit: 'MW'}
+process_temperature: {val: 110, unit: 'degC'}
+# Storage
+storage_temperature: {val: 160, unit: 'degC'}
+
+##### 3.Heat Pump Costs #####
+# 200 euro/kW -> $240/kW
+# 600 euro/kW -> $710/kW
+# 900 euro/kW -> $1070/kW
+specific_heatpump_cost: {val: 400.0, unit: 'USD/kW'} #400/kw from annex 58
+specific_storage_cost: {val: 0.51, unit: 'USD/L'} #6800L pressurized tank quoted in china
+specific_discharge_cost: {val: 36.0, unit: 'USD/kW'} #some hand wavey work hand calcs based on the tank quote - or #5k for a 140kW reboiler
+# Yearly O&M is assumed at 10% of capital cost, removed variable for simplicity
+fixed_o_and_m_per_size: {val: 40, unit: 'USD/kW/yr'}
+lifetime: {val: 20.0, unit: 'yr'}
+discount_rate: {val: 10, unit: 'percent'}
+#not used if variable pricing is used
+hourly_utility_rate: {val: 0.02, unit: 'USD / kW / hr'}
+utility_rate: {val: 10.0, unit: 'USD / kW'}
+# Emissions
+emissions_factor: {val: 0, unit: 'tonnes / MMBtu'}
+year_one_emissions: {val: 0.0, unit: 'ton / yr'}
+year_one_cost_of_emissions: {val: 0.0, unit: 'USD'}
+
+##### 5. Cash Flow Model #####
+CAGR: {val: 0.0214, unit: 'dimensionless'}
+
+##### Future Work #####
+# Latitude and Longitude is to use the Utility Rate Database
+# Currently not used but is set to an 'industrial' electricity schedule in Oregon
+lat: 39.74077
+long: -105.16888
+schedule: 'industrial'
