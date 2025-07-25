@@ -212,7 +212,7 @@ class heat_pump:
 
     ## Calculating working fluid energy and mass balance
     def calculate_energy_and_mass_flow(self):
-        if self.print_results: print('Calculate Energy and Mass Called')
+        # if self.print_results: print('Calculate Energy and Mass Called')
 
         # Initializing Temporary Arrays
         h_hi = Q_(np.array([-1.0]*self.n_hrs), 'J/kg')
@@ -260,10 +260,10 @@ class heat_pump:
         # Getting average values for reporting
         self.hot_mass_flowrate_average = np.mean(self.hot_mass_flowrate).to('kg /s')
         
-        if self.print_results: 
-            print('Hot Mass Flow Average: {:~.3P}'.format(self.hot_mass_flowrate_average))
-            print('Cold Average Outlet Temperature: {:~.2fP}'.format(np.mean(self.cold_final_temperature)))
-            print('Cold Mass Flow Rate:  {:~.2fP}'.format(np.mean(self.cold_mass_flowrate.to('kg/s'))))
+        # if self.print_results: 
+        #     print('Hot Mass Flow Average: {:~.3P}'.format(self.hot_mass_flowrate_average))
+        #     print('Cold Average Outlet Temperature: {:~.2fP}'.format(np.mean(self.cold_final_temperature)))
+        #     print('Cold Mass Flow Rate:  {:~.2fP}'.format(np.mean(self.cold_mass_flowrate.to('kg/s'))))
 
         # Calculating the Work into the heat pump
         self.power_in = self.process_heat_requirement.to('kW')/self.actual_COP
@@ -273,10 +273,10 @@ class heat_pump:
         self.annual_energy_in = self.mysum(self.power_in*Q_('1 hour')).to('kWh')
 
         
-        if self.print_results: 
-            print('Average Power Draw of Heat Pump: {:~.3fP}'.format(self.average_power_in))
-            print('Maximum Power Draw of Heat Pump: {:~.3fP}'.format(np.amax(self.power_in)))
-            print('Annual Electricity in: {:,~.1fP}'.format(self.annual_energy_in))
+        # if self.print_results: 
+        #     print('Average Power Draw of Heat Pump: {:~.3fP}'.format(self.average_power_in))
+        #     print('Maximum Power Draw of Heat Pump: {:~.3fP}'.format(np.amax(self.power_in)))
+        #     print('Annual Electricity in: {:,~.1fP}'.format(self.annual_energy_in))
         
 
 #calculate demand charges
@@ -288,8 +288,10 @@ class heat_pump:
     
         assert len(df) == len(self.power_in), "Power and rate time series must be same length"
     
-        power_series = pd.Series(self.average_power_in.magnitude, index=df.index) #2025-07-18 NR for now we assume there is enough storage to smooth the load
-    
+        #power_series = pd.Series(self.average_power_in.magnitude, index=df.index) #2025-07-18 NR for now we assume there is enough storage to smooth the load
+        power_series = pd.Series(self.power_in.magnitude, index=df.index) #2025-07-18 NR for now we assume there is enough storage to smooth the load
+        
+        
         total_charge = Q_(0.0, 'USD')
     
         for period, col in [
@@ -326,16 +328,16 @@ class heat_pump:
     
         N = self.lifetime.to('yr').magnitude
         r = self.discount_rate.to('dimensionless').magnitude
-        crf = r * (1 + r)**N / ((1 + r)**N - 1)
+        crf = r * (1 + r)**N / ((1 + r)**N - 1) #capital recovery factor
     
         # annualized values:
         annualized_capex = capex * crf / Q_('1 yr')
         total_annual_cost = (annualized_capex + annual_operating_costs) * Q_("1 year")  # USD
         
         # annual heat output as a flow per year
-        annual_heat_output = self.mysum(self.process_heat_requirement.to('MMBtu/hr') * Q_('1 hr')).to('MMBtu')
+        self.annual_heat_output = self.mysum(self.process_heat_requirement.to('MMBtu/hr') * Q_('1 hr')).to('MMBtu')
     
-        LCOH = (total_annual_cost / annual_heat_output).to('USD/MMBtu')
+        LCOH = (total_annual_cost / self.annual_heat_output).to('USD/MMBtu')
     
         if self.print_results:
             print(f"LCOH: {LCOH:~.2fP}")
@@ -362,14 +364,33 @@ class heat_pump:
             # 1-day (daily) moving average of hourly data (window=24 hours)
             daily_moving_avg = load_series.rolling(window=24, min_periods=1).mean()
             max_daily_avg = daily_moving_avg.max()  # in kW (thermal)
-        
+            
+            #calculate a couple of moving averages to determine the worst case for the storage
+            # 8-hour (1 workday) moving average of hourly data (window = 8 hours)
+            eight_hour_moving_avg = load_series.rolling(window=8, min_periods=1).mean()
+            max_8hour_avg = eight_hour_moving_avg.max()  # in kW (thermal)
+            
+            six_hour_moving_avg = load_series.rolling(window=6, min_periods=1).mean()
+            max_6hour_avg = six_hour_moving_avg.max()  # in kW (thermal)
+
+            four_hour_moving_avg = load_series.rolling(window=4, min_periods=1).mean()
+            max_4hour_avg = four_hour_moving_avg.max()  # in kW (thermal)
+            
+            two_hour_moving_avg = load_series.rolling(window=2, min_periods=1).mean()
+            max_2hour_avg = two_hour_moving_avg.max()  # in kW (thermal)
+
             # ---- size equipment based on your rules ----
-            # Heat pump power = 3 × highest weekly moving average so we can go down to 33% duty cycle even in the worst week
-            heat_pump_power_kw = 3 * max_weekly_avg
-        
-            # Storage capacity = 2 × highest daily moving average × hours in a day
-            # (daily average in kW × 24h = daily energy in kWh)
-            storage_kwh = 2.0 * max_daily_avg * 24.0
+            # Heat pump power = 1.5 × highest weekly moving average so we can go down to 33% duty cycle even in the worst week
+            #heat_pump_power_kw = 1.5 * max_weekly_avg #for a system with storage
+            heat_pump_power_kw=max(load_kw) #when you're using a full power system without storage
+
+            #assume when you're discharging you bump the heat pump power up to max
+            storage_energy=max((max_2hour_avg-heat_pump_power_kw)*2,(max_4hour_avg-heat_pump_power_kw)*4,(max_6hour_avg-heat_pump_power_kw)*6,(max_8hour_avg-heat_pump_power_kw)*8)
+            print(f"storage energy: {storage_energy}")
+                               
+            # Storage capacity needs to cover the difference between the thermal load and the max power of the heat pump for the highest 8 hour run
+            # with safety factor 2
+            storage_kwh = 2.0 * storage_energy
         
             # store them as Pint Quantities
             self.heat_pump_power = Q_(heat_pump_power_kw, 'kW')
@@ -460,6 +481,7 @@ class heat_pump:
                 print('Demand Chargess:  {:,~.2fP}'.format(kw_costs)) ## this line added
                 print('One Year Energy Costs: {:,~.2fP}'.format(self.year_one_energy_costs))
                 print('One Year Operating Costs: {:,~.2fP}'.format(self.year_one_operating_costs))
+                print('Annual Heat Output: {:,~.2fP}'.format(self.annual_heat_output))
                 print('Lifetime LCOH: {:,~.2fP}'.format(self.LCOH))
 
     def write_output(self, filename):
@@ -478,6 +500,7 @@ class heat_pump:
             ['Actual COP Calculated', '{:~.3fP}'.format(self.actual_COP)],
             ['Process Heat Average', '{:~.2fP}'.format(np.mean(self.process_heat_requirement.to('MMBtu/hr')))],
             ['Process Heat Average', '{:~.2fP}'.format(np.mean(self.process_heat_requirement.to('kW')))],
+            ['Annual heat output', '{:~.2fP}'.format(self.annual_heat_output)],
             ['Utility Rate Average', '{:,~.2fP}'.format(np.mean(self.hourly_utility_rate))],
             ['Capacity Factor', '{:~.3fP}'.format(np.mean(self.capacity_factor))],
             ['Project Lifetime', '{:~.2fP}'.format(self.lifetime)],
