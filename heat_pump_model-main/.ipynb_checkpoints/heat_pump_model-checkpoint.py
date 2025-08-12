@@ -207,8 +207,8 @@ class heat_pump:
                 quit()
 
         if self.print_results: print('Calculate COP Called')
-        if self.print_results: print('Average Theoretical COP: ', np.mean(self.ideal_COP))
-        if self.print_results: print('Average Estimated COP: ', np.mean(self.actual_COP))
+        if self.print_results: print('Average Theoretical COP: {:,~.2fP}'.format(np.mean(self.ideal_COP)))
+        if self.print_results: print('Average Estimated COP: {:,~.2fP}'.format( np.mean(self.actual_COP)))
 
     ## Calculating working fluid energy and mass balance
     def calculate_energy_and_mass_flow(self):
@@ -280,16 +280,18 @@ class heat_pump:
         
 
 #calculate demand charges
-    def calculate_tou_demand_charges(self, demand_csv_path):
+    def calculate_tou_demand_charges(self, demand_csv_path,power_kw_series):
         
         df = pd.read_csv(demand_csv_path)
         df['datetime'] = pd.to_datetime(df.iloc[:, 0])
         df = df.set_index('datetime')
     
-        assert len(df) == len(self.power_in), "Power and rate time series must be same length"
+        assert len(df) == len(power_kw_series), "Power and rate time series must be same length"
     
-        #power_series = pd.Series(self.average_power_in.magnitude, index=df.index) #2025-07-18 NR for now we assume there is enough storage to smooth the load
-        power_series = pd.Series(self.power_in.magnitude, index=df.index) #2025-07-18 NR for now we assume there is enough storage to smooth the load
+        power_series = pd.Series(power_kw_series.to('kW').magnitude, index=df.index) #takes an electrical power series in from a different part of the code
+        
+        #2025-07-18 NR for now we assume there is enough storage to smooth the load
+        #power_series = pd.Series(self.power_in.magnitude, index=df.index) #use this for a high power system without storage
         
         
         total_charge = Q_(0.0, 'USD')
@@ -323,7 +325,7 @@ class heat_pump:
 
     def calculate_LCOH(self, capital_costs, operating_costs):
         capex = capital_costs.to('USD')
-        print(capex)
+        
         annual_operating_costs = operating_costs.to('USD/yr')
     
         N = self.lifetime.to('yr').magnitude
@@ -339,8 +341,6 @@ class heat_pump:
     
         LCOH = (total_annual_cost / self.annual_heat_output).to('USD/MMBtu')
     
-        if self.print_results:
-            print(f"LCOH: {LCOH:~.2fP}")
     
         return LCOH
 
@@ -359,42 +359,52 @@ class heat_pump:
             # ---- compute rolling averages ----
             # 7-day (weekly) moving average of hourly data (window=168 hours)
             weekly_moving_avg = load_series.rolling(window=168, min_periods=1).mean()
+            max_weekly_idx = weekly_moving_avg.idxmax()
             max_weekly_avg = weekly_moving_avg.max()  # in kW (thermal)
-        
-            # 1-day (daily) moving average of hourly data (window=24 hours)
-            daily_moving_avg = load_series.rolling(window=24, min_periods=1).mean()
-            max_daily_avg = daily_moving_avg.max()  # in kW (thermal)
-            
-            #calculate a couple of moving averages to determine the worst case for the storage
-            # 8-hour (1 workday) moving average of hourly data (window = 8 hours)
-            eight_hour_moving_avg = load_series.rolling(window=8, min_periods=1).mean()
-            max_8hour_avg = eight_hour_moving_avg.max()  # in kW (thermal)
-            
-            six_hour_moving_avg = load_series.rolling(window=6, min_periods=1).mean()
-            max_6hour_avg = six_hour_moving_avg.max()  # in kW (thermal)
+            week_number = (max_weekly_idx // 168) + 1
+            print(f"Max weekly moving average: {max_weekly_avg:.2f} kW during week {week_number}")
 
-            four_hour_moving_avg = load_series.rolling(window=4, min_periods=1).mean()
-            max_4hour_avg = four_hour_moving_avg.max()  # in kW (thermal)
-            
-            two_hour_moving_avg = load_series.rolling(window=2, min_periods=1).mean()
-            max_2hour_avg = two_hour_moving_avg.max()  # in kW (thermal)
-
+            ##
             # ---- size equipment based on your rules ----
-            # Heat pump power = 1.5 × highest weekly moving average so we can go down to 33% duty cycle even in the worst week
-            #heat_pump_power_kw = 1.5 * max_weekly_avg #for a system with storage
-            heat_pump_power_kw=max(load_kw) #when you're using a full power system without storage
+            heat_pump_power_kw = 1.5 * max_weekly_avg  # HP power = 1.5 × highest weekly moving average
+            self.heat_pump_power_no_storage = max(self.process_heat_requirement)
+            
+            
+            # ---- storage sizing via rolling means up to 48h ----
+            
+            max_window = 48  # hours
 
-            #assume when you're discharging you bump the heat pump power up to max
-            storage_energy=max((max_2hour_avg-heat_pump_power_kw)*2,(max_4hour_avg-heat_pump_power_kw)*4,(max_6hour_avg-heat_pump_power_kw)*6,(max_8hour_avg-heat_pump_power_kw)*8)
-            print(f"storage energy: {storage_energy}")
+            #storage needs to cover the difference between heat pump peak power and instantaneous thermal load
+            # Ensure hourly spacing; require full windows to avoid edge bias
+            results = []
+            for h in range(1, max_window + 1):
+                rm = load_series.rolling(window=h, min_periods=h).mean()
+                # worst-case storage for window h = max over time of (rolling_mean - HP_power)+ * h
+                storage_kwh_h = ((rm - heat_pump_power_kw).clip(lower=0) * h).max()
+                max_avg_kw_h = rm.max()
+                results.append((h, float(max_avg_kw_h), float(storage_kwh_h)))
+            
+            res_df = pd.DataFrame(results, columns=["hours", "max_avg_kw", "storage_kwh"])
+            
+            # Pick the largest storage requirement and its window
+            idx = res_df["storage_kwh"].idxmax()
+            best_hours = int(res_df.loc[idx, "hours"])
+            best_storage_kwh = float(res_df.loc[idx, "storage_kwh"])
+            
+            #print(f"Heat pump power: {heat_pump_power_kw:.2f} kW (thermal)")
+            print(f"Largest storage requirement: {best_storage_kwh:.2f} kWh over {best_hours} hours")
+
+            average_therm_pwr = load_kw.mean() 
+
+            # Storage capacity needs to cover the difference between the thermal load and the max power of the heat pump at any point in the year
+            storage_kwh = 1.3 * best_storage_kwh
+            
                                
-            # Storage capacity needs to cover the difference between the thermal load and the max power of the heat pump for the highest 8 hour run
-            # with safety factor 2
-            storage_kwh = 2.0 * storage_energy
         
             # store them as Pint Quantities
             self.heat_pump_power = Q_(heat_pump_power_kw, 'kW')
             self.storage_size = Q_(storage_kwh, 'kWh')
+            
 
             ####Calculate storage volume and pressure
             fluid = 'Water'
@@ -424,12 +434,10 @@ class heat_pump:
             
             # Store for later use
             self.storage_volume = volume_L
-            self.storage_pressure = p_sat
+            self.storage_pressure = p_sat.to('kPa')
             
-            # Example prints:
-            if self.print_results:
-                print(f"Storage Volume: {volume_L:~.2fP}")
-                print(f"Saturation Pressure: {p_sat.to('bar'):~.2fP}")
+           
+                
         
             # ---- cost calculations ----
             # Capital cost based on installed heat pump power and storage
@@ -437,9 +445,14 @@ class heat_pump:
             self.storage_cost = self.specific_storage_cost * self.storage_volume
             self.discharge_cost=self.specific_discharge_cost * max(self.process_heat_requirement)
             self.total_capital=self.heatpump_cost+self.storage_cost+self.discharge_cost
+
+            self.heatpump_cost_no_storage = self.specific_heatpump_cost * self.heat_pump_power_no_storage
         
             # Year one fixed O&M cost based on peak capacity (thermal)
             self.year_one_fixed_o_and_m = self.fixed_o_and_m_per_size * self.heat_pump_power
+            self.year_one_fixed_o_and_m_no_storage = self.fixed_o_and_m_per_size * self.heat_pump_power_no_storage
+            
+            
             #removed variable O/M - we don't have any decent reference for this - better to not include
         
             
@@ -447,42 +460,66 @@ class heat_pump:
             self.capacity_factor = self.mysum(self.process_heat_requirement.to('kW'))/(self.n_hrs*np.max(self.process_heat_requirement.to('kW')))
     
             # Calculating the kWh costs
-            kwh_costs = Q_(np.array([0.0]*self.n_hrs), 'USD')
-            #kwh_costs = self.hourly_utility_rate*self.power_in*Q_('1 hr') NR commented out
-            kwh_costs = (self.hourly_utility_rate * self.average_power_in * Q_('1 hr')).to('USD') #changed to average power for now because we don't have a loop that generates hour by hour electrical power given a system storage capacity - this is fair for relatively large storage capacities
-    
-            #calculate demand charges
-            kw_costs = self.calculate_tou_demand_charges(self.demand_charge_file)
-            #original
-            #kw_costs = 12*self.utility_rate*np.amax(self.power_in) # What is this 12? What are the units?
-    
-            self.year_one_energy_costs = (np.sum(kwh_costs)+kw_costs)/Q_('1 yr')
+            kwh_costs_w_storage = Q_(np.array([0.0]*self.n_hrs), 'USD')
+            
+            
+            #calculate energy and demand charges, use a 1 week rolling average for the storage version and the raw power in for the no storage version
+           
+            _power_roll_kw = pd.Series(self.power_in.to('kW').magnitude).rolling(window=168, min_periods=1,center=True).mean().to_numpy()
+            _energy_roll = (Q_(_power_roll_kw, 'kW') * Q_('1 hr')).to('kWh')          # kWh per row
+            kwh_costs_w_storage = (self.hourly_utility_rate.to('USD/kWh') * _energy_roll).to('USD')  # USD per row
+            kwh_costs_no_storage = (self.hourly_utility_rate.to('USD/kWh')* (self.power_in.to('kW') * Q_('1 hr')).to('kWh')).to('USD')
+            
+            
+            kw_costs_w_storage = self.calculate_tou_demand_charges(self.demand_charge_file, Q_(_power_roll_kw, 'kW'))
+            kw_costs_no_storage = self.calculate_tou_demand_charges(self.demand_charge_file,self.power_in)
+            
+
+            
+            self.year_one_energy_costs = (np.sum(kwh_costs_w_storage)+kw_costs_w_storage)/Q_('1 yr')
+            self.year_one_energy_costs_no_storage = (np.sum(kwh_costs_no_storage)+kw_costs_no_storage)/Q_('1 yr')
+
+            
             self.year_one_operating_costs = self.year_one_fixed_o_and_m + self.year_one_energy_costs
+            self.year_one_operating_costs_no_storage = self.year_one_fixed_o_and_m_no_storage + self.year_one_energy_costs_no_storage
     
-            # kwh_costs is a vector of USD per hour, summed gives USD total
-            annual_energy_cost_total = (np.sum(kwh_costs) + kw_costs)
-
-            # convert total USD to a rate USD/year
-            annual_energy_costs = annual_energy_cost_total / Q_("1 year")
-
             self.LCOH = self.calculate_LCOH(self.heatpump_cost + self.storage_cost + self.discharge_cost,self.year_one_operating_costs)
+            self.Levelized_Capex = self.calculate_LCOH(self.heatpump_cost + self.storage_cost + self.discharge_cost,Q_(0, 'USD/yr'))
+            self.Levelized_OpEx = self.calculate_LCOH(Q_(0, 'USD'),self.year_one_operating_costs)
+
+
+            self.LCOH_no_storage = self.calculate_LCOH(self.heatpump_cost_no_storage,self.year_one_operating_costs_no_storage)
+            self.Levelized_Capex_no_storage = self.calculate_LCOH(self.heatpump_cost_no_storage,Q_(0, 'USD/yr'))
+            self.Levelized_OpEx_no_storage = self.calculate_LCOH(Q_(0, 'USD'),self.year_one_operating_costs_no_storage)
 
     
             if self.print_results: 
                 print('System Power: {:,~.2fP}'.format(self.heat_pump_power))
-                print('System Storage: {:,~.2fP}'.format(self.storage_size))            
+                print('System Storage: {:,~.2fP}'.format(self.storage_size))
+                print('Storage Volume: {:,~.2fP}'.format(self.storage_volume))
+                print('Storage Pressure: {:,~.2fP}'.format(self.storage_pressure))
                 print('Heat Pump Cost: {:,~.2fP}'.format(self.heatpump_cost))
                 print('Storage Cost: {:,~.2fP}'.format(self.storage_cost))
                 print('Steam Dischage Cost: {:,~.2fP}'.format(self.discharge_cost))
                 print('Total Capital Cost: {:,~.2fP}'.format(self.total_capital))
                 print('Capacity Factor: {:~.3fP}'.format(self.capacity_factor))
                 print('One Year Fixed O&M Costs: {:,~.2fP}'.format(self.year_one_fixed_o_and_m))
-                print('One Year Generation&Transmission Costs: {:,~.2fP}'.format(np.sum(kwh_costs)))
-                print('Demand Chargess:  {:,~.2fP}'.format(kw_costs)) ## this line added
-                print('One Year Energy Costs: {:,~.2fP}'.format(self.year_one_energy_costs))
-                print('One Year Operating Costs: {:,~.2fP}'.format(self.year_one_operating_costs))
+                print('One Year Generation & Transmission Costs: {:,~.2fP}'.format(np.sum(kwh_costs_w_storage)))
+                print('Demand Charges with Storage:  {:,~.2fP}'.format(kw_costs_w_storage)) ## this line added
+                print('One Year Total Energy Costs: {:,~.2fP}'.format(self.year_one_energy_costs))
+                print('One Year Total Operating Costs: {:,~.2fP}'.format(self.year_one_operating_costs))
                 print('Annual Heat Output: {:,~.2fP}'.format(self.annual_heat_output))
-                print('Lifetime LCOH: {:,~.2fP}'.format(self.LCOH))
+                print('LCOH: {:,~.2fP}'.format(self.LCOH))
+                print('Levelized Capex: {:,~.2fP}'.format(self.Levelized_Capex))
+                print('Levelized OpEx: {:,~.2fP}'.format(self.Levelized_OpEx))
+                print('COMPARE TO NO STORAGE')
+                print('No Storage LCOH: {:,~.2fP}'.format(self.LCOH_no_storage))
+                print('Levelized Capex no storage: {:,~.2fP}'.format(self.Levelized_Capex_no_storage))
+                print('Levelized OpEx no storage: {:,~.2fP}'.format(self.Levelized_OpEx_no_storage))
+                #print('No Storage demand charges: {:,~.2fP}'.format(kw_costs_no_storage))
+                #print('No Storage energy charges: {:,~.2fP}'.format(np.sum(kwh_costs_no_storage)))
+                #print('No Storage O&M: {:,~.2fP}'.format(self.year_one_fixed_o_and_m_no_storage))
+                
 
     def write_output(self, filename):
         data = [

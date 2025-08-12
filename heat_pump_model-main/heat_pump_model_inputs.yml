@@ -49,13 +49,13 @@ storage_temperature: {val: 160, unit: 'degC'}
 # 200 euro/kW -> $240/kW
 # 600 euro/kW -> $710/kW
 # 900 euro/kW -> $1070/kW
-specific_heatpump_cost: {val: 400.0, unit: 'USD/kW'} #400/kw from annex 58
+specific_heatpump_cost: {val: 400.0, unit: 'USD/kW'} #400/kw from annex 58 of IEA report
 specific_storage_cost: {val: 0.66, unit: 'USD/L'} #6800L pressurized tank quoted in china for $3500 + $1000 in insulation 0.66
-specific_discharge_cost: {val: 36.0, unit: 'USD/kW'} #some hand wavey work hand calcs based on the tank quote - or #5k for a 140kW reboiler $36/kw
+specific_discharge_cost: {val: 36.0, unit: 'USD/kW'}  #$5k for a 140kW reboiler $36/kw - this could be better justified
 # Yearly O&M is assumed at 10% of capital cost, removed variable for simplicity
 fixed_o_and_m_per_size: {val: 40, unit: 'USD/kW/yr'}
 lifetime: {val: 20.0, unit: 'yr'}
-discount_rate: {val: 10, unit: 'percent'}
+discount_rate: {val: 5, unit: 'percent'}
 #not used if variable pricing is used
 hourly_utility_rate: {val: 0.02, unit: 'USD / kW / hr'}
 utility_rate: {val: 10.0, unit: 'USD / kW'}

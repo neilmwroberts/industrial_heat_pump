@@ -26,7 +26,7 @@ class gas_heater:
         ## Outputs
         ## Note keeping in line with heat pump model structure, the energy
         ## and mass flow is item number 2. Heat Pump item number 1 is COP 
-        ## and electro-resistive heater has no COP.
+        
         self.process_heat_requirement = Q_(np.array([-1.0]*2), 'kW')
         self.power_in = Q_(np.array([-1.0]*2), 'kW') # Gives the Energy into the heat pump in power
         self.thermal_efficiency = np.array([1.0]*self.n_hrs)*ureg.dimensionless
@@ -36,9 +36,9 @@ class gas_heater:
         self.hot_temperature_out = Q_(np.array([90]*8760), 'degC')
         self.cold_temperature_in = Q_(np.array([60]*8760), 'degC')
 
-        ##### 3.Electro-resistive heater costs #####
+        ##### 3.Gas Boiler costs #####
         self.capital_cost = Q_('-1.0 USD')
-        self.year_one_energy_costs = Q_('-1.0 USD/yr')
+        self.year_one_energy_cost = Q_('-1.0 USD/yr')
         self.year_one_fixed_o_and_m = Q_('-1.0 USD/yr')
         self.year_one_variable_o_and_m = Q_('-1.0 USD/yr')
         self.year_one_operating_costs = Q_('-1.0 USD/yr')
@@ -64,6 +64,29 @@ class gas_heater:
                 quit()
         self.__dict__.update(input_dict)
 
+
+    def calculate_LCOH(self, capital_costs, operating_costs):
+        capex = capital_costs.to('USD')
+        
+        annual_operating_costs = operating_costs.to('USD/yr')
+        
+        N = self.lifetime.to('yr').magnitude
+        r = self.discount_rate.to('dimensionless').magnitude
+        crf = r * (1 + r)**N / ((1 + r)**N - 1) #capital recovery factor
+        
+        # annualized values:
+        annualized_capex = capex * crf / Q_('1 yr')
+        total_annual_cost = (annualized_capex + annual_operating_costs) * Q_("1 year")  # USD
+        
+        # annual heat output as a flow per year
+        self.annual_heat_output = self.mysum(self.process_heat_requirement.to('MMBtu/hr') * Q_('1 hr')).to('MMBtu')
+        
+        LCOH = (total_annual_cost / self.annual_heat_output).to('USD/MMBtu')
+        
+        
+        return LCOH
+
+    
     def mysum(self, array_or_float):
         try:
             if len(array_or_float.magnitude) > 1.0:
@@ -73,79 +96,63 @@ class gas_heater:
         except(TypeError):
             return self.n_hrs*array_or_float
 
-    def calculate_energy_and_mass_flow(self):
-        if self.print_results: print('Calculate Energy and Mass Called')
-
-        # Calculating working fluid enthalpy change
-        h_i = Q_(np.array([-1.0]*self.n_hrs), 'J/kg')
-        h_o = Q_(np.array([-1.0]*self.n_hrs), 'J/kg')
-        h_i = Q_(PropsSI('H', 'T', self.cold_temperature.to('degK').m, 'P', self.cold_pressure.to('Pa').m, self.working_fluid), 'J/kg')
-        h_o = Q_(PropsSI('H', 'T', self.hot_temperature.to('degK').m, 'P', self.hot_pressure.to('Pa').m, self.working_fluid), 'J/kg')
-        
-        # Calculating the working fluid flowrate
-        self.working_fluid_flowrate = (self.process_heat_requirement.to('W')/(h_o - h_i)).to('kg/s')
-        self.working_fluid_flowrate_average = np.mean(self.working_fluid_flowrate).to('kg /s')
-        if self.print_results: 
-            print('Hot Mass Flow Average: {:~.3P}'.format(self.working_fluid_flowrate_average))
-
-        # Calculating the Work into the Gas Heater
-        self.power_in = self.process_heat_requirement.to('kW')/self.thermal_efficiency
-        self.average_power_in = np.mean(self.power_in)
-        self.annual_energy_in = self.mysum(self.power_in*Q_('1 hour')).to('kWh')
-
-        self.fuel_consumed = self.emissions_volume_per_energy*self.annual_energy_in.to('MMBtu')
-
-        if self.print_results: 
-            print('Average Power Draw of Gas Heater: {:~.3fP}'.format(self.average_power_in))
-            print('Maximum Power Draw of Gas Heater: {:~.3fP}'.format(np.amax(self.power_in)))
-            print('Annual Gas in: {:,~.1fP}'.format(self.fuel_consumed))
-
-
     def calculate_costs(self):
 
-        self.capital_cost = self.specific_capital_cost * np.max(self.process_heat_requirement.to('kW'))
+        self.peak_power = np.max(self.process_heat_requirement.to('kW'))
+        self.capital_cost = self.specific_capital_cost * self.peak_power
         self.capital_cost = self.capital_cost.to('USD')
-        self.year_one_fixed_o_and_m = self.fixed_o_and_m_per_size*np.max(self.process_heat_requirement.to('MMBtu/hr'))/Q_('1 yr')
-        self.year_one_fixed_o_and_m = self.year_one_fixed_o_and_m
-        self.year_one_variable_o_and_m = self.variable_o_and_m*self.mysum(self.process_heat_requirement.to('MMBtu/hr')*Q_('1 hr'))/Q_('1 yr')
-        self.year_one_variable_o_and_m = self.year_one_variable_o_and_m
-
-        self.capacity_factor = self.mysum(self.process_heat_requirement.to('kW'))/(self.n_hrs*np.max(self.process_heat_requirement.to('kW')))
-
-        # Calculating emissions costs
         
-        self.year_one_emissions = (self.mysum(self.process_heat_requirement.to('MMBtu/yr'))/self.thermal_efficiency) * self.emissions_factor
+        # --- Fixed O&M (USD/yr) ---
+        self.year_one_fixed_o_and_m = (self.fixed_o_and_m_per_size * self.peak_power.to('MMBtu/hr')) / Q_('1 yr')  # attach /yr
         
-        self.year_one_cost_of_emissions =   (self.emissions_carbon_price * self.year_one_emissions)
-
-        # Calculating Fuel Costs
-        self.year_one_fuel_costs = self.gas_price*self.process_heat_requirement.to('MMBtu/hr')/self.thermal_efficiency
-        self.year_one_energy_costs = (self.mysum(self.year_one_fuel_costs*Q_('1 hr')))/Q_('1 yr')
+        # --- Variable O&M (USD/yr) ---
+        self.year_one_variable_o_and_m = (self.variable_o_and_m * self.mysum(self.process_heat_requirement.to('MMBtu/hr') * Q_('1 hr'))) / Q_('1 yr')
         
-        # Combinging
-        self.year_one_operating_costs = self.year_one_fixed_o_and_m + self.year_one_variable_o_and_m + self.year_one_energy_costs + self.year_one_cost_of_emissions
-        self.year_one_operating_costs = self.year_one_operating_costs
-
-
-        ## Need to edit from here, and add gas increase cost rate
-        self.LCOH = (self.capital_cost + self.lifetime*self.year_one_operating_costs)/(self.lifetime*self.mysum(self.process_heat_requirement.to('MMBtu/hr')*Q_('1 hr'))/Q_('1 yr'))
+        # --- Capacity factor (dimensionless) ---
+        self.capacity_factor = (self.mysum(self.process_heat_requirement.to('kW') * Q_('1 hr')) /(self.n_hrs * np.max(self.process_heat_requirement.to('kW')) *Q_('1 hr'))).to('dimensionless')
+        
+        # --- Fuel energy over the year (MMBtu, total) ---
+        self.fuel_consumed = self.mysum((self.process_heat_requirement.to('MMBtu/hr') / self.thermal_efficiency) * Q_('1 hr')).to('MMBtu')
+        
+        # --- Fuel spend (USD/yr) ---
+        self.year_one_energy_cost = (self.gas_price * self.fuel_consumed) / Q_('1 yr')
+        
+        # --- Emissions (ton/yr) and cost (USD/yr) ---
+        self.year_one_emissions = (self.fuel_consumed * self.emissions_factor) / Q_('1 yr')
+        self.year_one_cost_of_emissions = (self.emissions_carbon_price * self.year_one_emissions).to('USD/yr')
+        
+        # --- Sum (USD/yr) ---
+        self.year_one_operating_costs = (
+            self.year_one_fixed_o_and_m
+            + self.year_one_variable_o_and_m
+            + self.year_one_energy_cost
+            + self.year_one_cost_of_emissions
+        ).to('USD/yr')
+        
+        # --- LCOH ---
+        self.LCOH = self.calculate_LCOH(self.capital_cost, self.year_one_operating_costs)
+        #break out capex and opex
+        self.Levelized_Capex = self.calculate_LCOH(self.capital_cost,Q_(0, 'USD/yr'))
+        self.Levelized_OpEx = self.calculate_LCOH(Q_(0, 'USD'),self.year_one_operating_costs)
+        
 
         if self.print_results: 
             print('Capital Cost: {:,~.2fP}'.format(self.capital_cost))
+            print('Fuel Consumed: {:,~.2fP}'.format(self.fuel_consumed))
             print('Capacity Factor: {:~.3fP}'.format(self.capacity_factor))
             print('One Year Fixed O&M Costs: {:,~.2fP}'.format(self.year_one_fixed_o_and_m))
             print('One Year Variable O&M Costs: {:,~.2fP}'.format(self.year_one_variable_o_and_m))
-            print('One Year Energy Costs: {:,~.2fP}'.format(self.year_one_energy_costs))
+            print('One Year Energy Costs: {:,~.2fP}'.format(self.year_one_energy_cost))
             print('One Year Operating Costs: {:,~.2fP}'.format(self.year_one_operating_costs))
-            print('Lifetime LCOH: {:,~.2fP}'.format(self.LCOH.to('USD/MMBtu')))
+            print('Overall LCOH: {:,~.2fP}'.format(self.LCOH.to('USD/MMBtu')))
+            print('Levelized Capex: {:,~.2fP}'.format(self.Levelized_Capex.to('USD/MMBtu')))
+            print('Levelized Opex: {:,~.2fP}'.format(self.Levelized_OpEx.to('USD/MMBtu')))
             print('Year 1 Emissions: {:,~.2fP}'.format(self.year_one_emissions))
 
     def write_output(self, filename):
         data = [
             ['Cold Temperature Available', '{:~.2fP}'.format(self.cold_temperature)],
-            ['Mass Flowrate', '{:~.3fP}'.format(np.mean(self.working_fluid_flowrate).to('kg / s'))],
             ['Hot Temperature Desired', '{:~.2fP}'.format(self.hot_temperature)],
-            ['Hot Mass Flowrate', '{:~.3fP}'.format(self.working_fluid_flowrate_average)],
             ['Gas Heater Efficiency', '{:~.3fP}'.format(self.thermal_efficiency)],
             ['Process Heat Average', '{:~.2fP}'.format(np.mean(self.process_heat_requirement.to('MMBtu/hr')))],
             ['Process Heat Average', '{:~.2fP}'.format(np.mean(self.process_heat_requirement.to('kW')))],
@@ -160,7 +167,7 @@ class gas_heater:
             ['Variable O&M Costs', '{:,~.2fP}'.format(self.variable_o_and_m)],
             ['Capital Cost', '{:,~.2fP}'.format(self.capital_cost)],
             ['Emissions', '{:~.2fP}'.format(self.year_one_emissions)],
-            ['Year One Energy Costs', '{:,~.2fP}'.format(self.year_one_energy_costs)],
+            ['Year One Energy Costs', '{:,~.2fP}'.format(self.year_one_energy_cost)],
             ['Year One Fixed O&M Costs', '{:,~.2fP}'.format(self.year_one_fixed_o_and_m)],
             ['Year One Variable O&M Costs', '{:,~.2fP}'.format(self.year_one_variable_o_and_m)],
             ['Year One Total Operating Costs', '{:,~.2fP}'.format(self.year_one_operating_costs)],
@@ -173,7 +180,6 @@ class gas_heater:
 
 
     def run_all(self,filename):
-        self.calculate_energy_and_mass_flow()
         self.calculate_costs()
         if self.write_output_file: self.write_output(filename)
 

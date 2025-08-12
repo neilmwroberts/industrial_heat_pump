@@ -27,12 +27,12 @@ process_heat_requirement: {val: 1.0, unit: 'MW'}
 
 ##### 3.Gas Costs #####
 # $9000/MMBTU/Hr -> $30/kW
-specific_capital_cost: {val: 0000, unit: 'USD / (MMBtu / hr)'} #9000$/mmbtu/hr
+specific_capital_cost: {val: 9000, unit: 'USD / (MMBtu / hr)'} #9000$/mmbtu/hr
 fixed_o_and_m_per_size: {val: 50, unit: 'USD / (MMBtu / hr)'}
 variable_o_and_m: {val: 0.01, unit: 'USD / MMBtu'}
-gas_price: {val: 20.77, unit: 'USD / MMBtu'} #2025-04-22 Schedule G10 core commodity gas price from socal gas https://tariffsprd.socalgas.com/view/historical/?utilId=SCG&bookId=GAS&tarfKey=327&tarfYear=2025
+gas_price: {val: 0.0, unit: 'USD / MMBtu'}
 lifetime: {val: 20.0, unit: 'yr'}
-discount_rate: {val: 10, unit: 'percent'}
+discount_rate: {val: 5, unit: 'percent'}
 # Emissions
 emissions_factor: {val: 0.053, unit: 'ton / MMBtu'}
 emissions_volume_per_energy: {val: 9.804e-4, unit: 'MMSCF/MMBtu'}
